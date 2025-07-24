@@ -22,7 +22,7 @@ if PPLX_KEY:
     client = OpenAI(api_key=PPLX_KEY, base_url="https://api.perplexity.ai")
 
 # Helpers
-def get_time_series(symbol):
+def get_time_series(symbol: str) -> pd.DataFrame:
     try:
         ts = td.time_series(symbol=symbol, interval="1day", outputsize=1825)
         df = ts.as_pandas()
@@ -31,13 +31,13 @@ def get_time_series(symbol):
     except:
         return pd.DataFrame()
 
-def get_current_price(symbol):
+def get_current_price(symbol: str):
     try:
         return float(td.price(symbol=symbol).as_json()["value"])
     except:
         return None
 
-def fetch_rss(url, n=5):
+def fetch_rss(url: str, n: int = 5):
     import requests
     from bs4 import BeautifulSoup
     resp = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
@@ -47,7 +47,7 @@ def fetch_rss(url, n=5):
         for i in soup.find_all("item")[:n]
     ]
 
-def extract_text(b, fn):
+def extract_text(b: bytes, fn: str) -> str:
     if fn.lower().endswith(".pdf"):
         from pypdf import PdfReader
         pdf = PdfReader(io.BytesIO(b))
@@ -63,7 +63,7 @@ def extract_text(b, fn):
         return "\n".join(texts)
     return ""
 
-def analyze_ai(text, prompt):
+def analyze_ai(text: str, prompt: str) -> str:
     if not client:
         return "⚠️ Perplexity API key missing."
     try:
@@ -71,7 +71,7 @@ def analyze_ai(text, prompt):
             model="sonar-pro",
             messages=[
                 {"role":"system", "content":prompt},
-                {"role":"user", "content": text[:12000]}
+                {"role":"user",   "content":text[:12000]}
             ]
         )
         return res.choices[0].message.content
@@ -80,24 +80,24 @@ def analyze_ai(text, prompt):
 
 # Sidebar inputs
 st.sidebar.title("🔍 Search & Upload")
-symbol = st.sidebar.text_input("Enter symbol (e.g. RELIANCE.BSE or INFY.NSE)")
+raw = st.sidebar.text_input("Enter symbol and exchange (e.g. INFY:NSE or RELIANCE:BSE)")
 uploads = st.sidebar.file_uploader("Upload PDF/PPTX", accept_multiple_files=True, type=["pdf","pptx"])
 
-if not symbol:
-    st.info("Enter a symbol to begin.")
+if not raw:
+    st.info("Enter a symbol with exchange suffix (e.g. INFY:NSE).")
     st.stop()
 
-# Fetch data
+symbol = raw.strip().upper()
 ts = get_time_series(symbol)
 price = get_current_price(symbol)
 if ts.empty or price is None:
-    st.error(f"No data for {symbol}. Check symbol or API limits.")
+    st.error(f"No data for {symbol}. Check symbol format (use SYMBOL:EXCHANGE) or API limits.")
     st.stop()
 
 # Display price & chart
 st.markdown(f"<div class='section-title'>💹 {symbol}</div>", unsafe_allow_html=True)
 c1, c2, c3 = st.columns(3)
-c1.metric("Current Price", f"₹{price}")
+c1.metric("Current Price", f"₹{price:.2f}")
 c2.metric("52W High", f"₹{ts['high'].max():.2f}")
 c3.metric("52W Low", f"₹{ts['low'].min():.2f}")
 st.line_chart(ts["close"])
@@ -105,16 +105,16 @@ st.line_chart(ts["close"])
 # News & Competition
 st.markdown("<div class='section-title'>📰 News & Competition</div>", unsafe_allow_html=True)
 for label, url in [
-    ("Google News", f"https://news.google.com/rss/search?q={symbol}+stock+india"),
-    ("ET Top Stories", "https://economictimes.indiatimes.com/rssfeedstopstories.cms"),
-    ("ET Industry News", "https://economictimes.indiatimes.com/rss/etindustryrss.cms"),
-    ("Mint Latest News", "https://www.livemint.com/rss/news")
+    ("Google News",         f"https://news.google.com/rss/search?q={symbol}+stock+india"),
+    ("ET Top Stories",      "https://economictimes.indiatimes.com/rssfeedstopstories.cms"),
+    ("ET Industry News",    "https://economictimes.indiatimes.com/rss/etindustryrss.cms"),
+    ("Mint Latest News",    "https://www.livemint.com/rss/news")
 ]:
     st.markdown(f"**{label}**")
     for item in fetch_rss(url, 5):
         st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
 
-# Community Threads (ValuePickr & Reddit via RSS)
+# Community Threads
 st.markdown("<div class='section-title'>💬 Community Threads (Last 90 Days)</div>", unsafe_allow_html=True)
 import feedparser, re
 cutoff = dt.datetime.utcnow() - dt.timedelta(days=90)
@@ -132,10 +132,10 @@ for e in vp_feed.entries:
         "URL": e.link
     })
 st.dataframe(pd.DataFrame(vp).sort_values(["Replies","Date"], ascending=False).head(15))
-# Reddit via Google News RSS
+# Reddit via RSS
 rd = fetch_rss(f"https://news.google.com/rss/search?q={symbol}+site:reddit.com", 15)
 st.markdown("**Reddit Top Discussions**")
-st.dataframe(pd.DataFrame([{"Date":i["date"],"Title":i["title"],"URL":i["link"]} for i in rd]))
+st.dataframe(pd.DataFrame([{"Date":i["date"], "Title":i["title"], "URL":i["link"]} for i in rd]))
 
 # AI-Powered Management Analysis
 if uploads and client:
