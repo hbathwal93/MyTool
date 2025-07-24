@@ -44,10 +44,20 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize Perplexity client
+# Initialize Perplexity client - OPTIMIZED FOR RENDER.COM
 @st.cache_resource
 def init_perplexity_client():
-    api_key = st.secrets.get("PPLX_API_KEY") or os.getenv("PPLX_API_KEY")
+    # For Render.com, prioritize environment variables over st.secrets
+    api_key = os.getenv("PPLX_API_KEY")
+    
+    # Only try st.secrets if environment variable is not found
+    if not api_key:
+        try:
+            api_key = st.secrets.get("PPLX_API_KEY")
+        except (FileNotFoundError, AttributeError):
+            # No secrets file found, which is expected on Render.com
+            pass
+    
     if api_key:
         return OpenAI(api_key=api_key, base_url="https://api.perplexity.ai")
     return None
@@ -57,7 +67,7 @@ client = init_perplexity_client()
 def query_perplexity(prompt, model="sonar-pro"):
     """Query Perplexity API with error handling"""
     if not client:
-        return "⚠️ Perplexity API key not configured. Please add PPLX_API_KEY to Streamlit secrets."
+        return "⚠️ Perplexity API key not configured. Please add PPLX_API_KEY as environment variable on Render.com."
     
     try:
         response = client.chat.completions.create(
@@ -96,7 +106,7 @@ if st.sidebar.button("🚀 Generate Complete Analysis", type="primary"):
     if not ticker_input:
         st.error("Please enter a stock ticker or company name.")
     elif not client:
-        st.error("Perplexity API key not configured. Please check your secrets configuration.")
+        st.error("Perplexity API key not configured. Please check your environment variables on Render.com.")
     else:
         ticker = ticker_input.upper().strip()
         
@@ -675,7 +685,7 @@ if st.sidebar.button("🔧 Check API Configuration"):
         st.sidebar.success("✅ Perplexity API Connected")
     else:
         st.sidebar.error("❌ Perplexity API Key Missing")
-        st.sidebar.info("Add PPLX_API_KEY to Streamlit secrets")
+        st.sidebar.info("Add PPLX_API_KEY as environment variable on Render.com")
 
 # Footer
 st.markdown("---")
