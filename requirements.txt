@@ -4,7 +4,7 @@ pandas==2.2.0
 requests==2.32.3
 beautifulsoup4==4.12.3
 feedparser==6.0.10
-# psaw removed
+# Removed psaw due to outdated version issues, can add later if needed
 pypdf==5.8.0
 python-pptx==0.6.23
 openai==1.31.0
