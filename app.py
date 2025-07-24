@@ -3,9 +3,9 @@ import io
 import datetime as dt
 import streamlit as st
 
-# Lazy imports inside functions
+# Lazy imports inside functions to speed up startup
 def import_dependencies():
-    global requests, yfinance, pd, BeautifulSoup, PdfReader, Presentation, OpenAI, feedparser
+    global requests, yfinance, pd, BeautifulSoup, PdfReader, Presentation, OpenAI, feedparser, PushshiftAPI
     import requests
     import yfinance as yf
     import pandas as pd
@@ -14,6 +14,7 @@ def import_dependencies():
     from pptx import Presentation
     from openai import OpenAI
     import feedparser
+    from psaw import PushshiftAPI
 
 import_dependencies()
 
@@ -32,7 +33,7 @@ a {{color:{ACCENT};}}
 </style>
 """, unsafe_allow_html=True)
 
-# Perplexity.Client Setup
+# Perplexity Client Setup
 PPLX_KEY = st.secrets.get("PPLX_API_KEY") or os.getenv("PPLX_API_KEY")
 client = OpenAI(api_key=PPLX_KEY, base_url="https://api.perplexity.ai") if PPLX_KEY else None
 
@@ -60,7 +61,6 @@ def read_html_table_screener(ticker_code, table_index):
     soup = BeautifulSoup(resp.text, "html.parser")
     tables = soup.find_all("table", class_="data-table")
     if len(tables) > table_index:
-        # Use pure Python parser to avoid lxml build issues
         return pd.read_html(str(tables[table_index]), flavor="html5lib")[0]
     return None
 
@@ -109,73 +109,16 @@ def extract_text_from_file(file_bytes, filename):
 
 def analyze_perplexity_document(text, prompt):
     if client is None:
-        return "Perplexity API key is missing or invalid."
+        return "🔑 Missing or invalid Perplexity API key."
     messages = [
         {"role": "system", "content": prompt},
-        {"role": "user", "content": text[:12000]}  # truncate to limit tokens
+        {"role": "user", "content": text[:12000]}  # truncate to token limit
     ]
     try:
         response = client.chat.completions.create(model="sonar-pro", messages=messages)
         return response.choices[0].message.content
     except Exception as e:
         return f"Error during Perplexity API call: {e}"
-
-# Sidebar: Input
-st.sidebar.title("🔍 Search & Upload")
-user_input = st.sidebar.text_input("Enter stock ticker (NSE/BSE code) or company name")
-uploaded_files = st.sidebar.file_uploader("Upload PPT/PDF (Investor Presentation, Calls)", accept_multiple_files=True, type=['pdf', 'pptx'])
-
-if not user_input:
-    st.info("Enter a ticker symbol in the sidebar to begin.")
-    st.stop()
-
-ticker_resolved, stock_info, stock_hist = resolve_ticker(user_input.upper())
-if ticker_resolved is None:
-    st.error("Ticker not found on Yahoo Finance. Please check input.")
-    st.stop()
-
-ticker_code = ticker_resolved.replace(".NS", "").replace(".BO", "")
-st.markdown(f"<div class='section-title'>💹 {ticker_resolved}</div>", unsafe_allow_html=True)
-
-# Price summary
-c1, c2, c3 = st.columns(3)
-c1.metric("Current Price", f"₹{stock_info.get('regularMarketPrice', 'N/A')}")
-c2.metric("52-Week High", f"₹{stock_info.get('fiftyTwoWeekHigh', 'N/A')}")
-c3.metric("52-Week Low", f"₹{stock_info.get('fiftyTwoWeekLow', 'N/A')}")
-st.line_chart(stock_hist["Close"])
-
-# Sectoral Trends & Triggers
-st.markdown("<div class='section-title'>🌐 Sectoral Trends & Triggers (Last 7 Days)</div>", unsafe_allow_html=True)
-sector = stock_info.get("sector", "")
-sector_news = get_news_google(sector, 7) if sector else []
-for item in sector_news:
-    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
-
-# News & Competition
-st.markdown("<div class='section-title'>📰 News & Competition</div>", unsafe_allow_html=True)
-st.markdown("**Google News (Company)**")
-company_news = get_news_google(ticker_code, 5)
-for item in company_news:
-    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
-
-st.markdown("**Economic Times - Top Stories**")
-et_top_news = get_news_et_top(5)
-for item in et_top_news:
-    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
-
-st.markdown("**Economic Times - Industry News**")
-et_ind_news = get_news_et_industry(5)
-for item in et_ind_news:
-    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
-
-st.markdown("**Mint - Latest News**")
-mint_news_list = get_news_mint(5)
-for item in mint_news_list:
-    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
-
-# Forum threads (ValuePickr and Reddit)
-import pandas as pd
-from psaw import PushshiftAPI
 
 def fetch_valuepickr_threads(n=15):
     feed_url = "https://valuepickr4.rssing.com/chan-72344682/latest.php"
@@ -214,6 +157,60 @@ def fetch_reddit_threads(subreddits, n=15):
     df = df.sort_values(["Comments", "Score"], ascending=False)
     return df.head(n)
 
+# Sidebar - Input Section
+st.sidebar.title("🔍 Search & Upload")
+user_input = st.sidebar.text_input("Enter stock ticker (NSE/BSE code) or company name")
+uploaded_files = st.sidebar.file_uploader("Upload PPT/PDF (Investor Presentations, Calls)", accept_multiple_files=True, type=['pdf', 'pptx'])
+
+if not user_input:
+    st.info("Enter a ticker symbol in the sidebar to begin.")
+    st.stop()
+
+ticker_resolved, stock_info, stock_hist = resolve_ticker(user_input.upper())
+if ticker_resolved is None:
+    st.error("Ticker not found on Yahoo Finance. Please check input.")
+    st.stop()
+
+ticker_code = ticker_resolved.replace(".NS", "").replace(".BO", "")
+st.markdown(f"<div class='section-title'>💹 {ticker_resolved}</div>", unsafe_allow_html=True)
+
+# Price summary metrics
+c1, c2, c3 = st.columns(3)
+c1.metric("Current Price", f"₹{stock_info.get('regularMarketPrice', 'N/A')}")
+c2.metric("52-Week High", f"₹{stock_info.get('fiftyTwoWeekHigh', 'N/A')}")
+c3.metric("52-Week Low", f"₹{stock_info.get('fiftyTwoWeekLow', 'N/A')}")
+st.line_chart(stock_hist["Close"])
+
+# 1. Sectoral Trends & Triggers
+st.markdown("<div class='section-title'>🌐 Sectoral Trends & Triggers (Last 7 Days)</div>", unsafe_allow_html=True)
+sector = stock_info.get("sector", "")
+sector_news = get_news_google(sector, 7) if sector else []
+for item in sector_news:
+    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
+
+# 2. News & Competition
+st.markdown("<div class='section-title'>📰 News & Competition</div>", unsafe_allow_html=True)
+st.markdown("**Google News (Company)**")
+company_news = get_news_google(ticker_code, 5)
+for item in company_news:
+    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
+
+st.markdown("**Economic Times - Top Stories**")
+et_top_news = get_news_et_top(5)
+for item in et_top_news:
+    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
+
+st.markdown("**Economic Times - Industry News**")
+et_ind_news = get_news_et_industry(5)
+for item in et_ind_news:
+    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
+
+st.markdown("**Mint - Latest News**")
+mint_news_list = get_news_mint(5)
+for item in mint_news_list:
+    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
+
+# 6. Forum Threads (ValuePickr & Reddit)
 st.markdown("<div class='section-title'>💬 Investor Community Threads (Last 90 Days)</div>", unsafe_allow_html=True)
 st.markdown("**ValuePickr Top Discussions**")
 vp_df = fetch_valuepickr_threads()
@@ -247,7 +244,7 @@ else:
     if not PPLX_KEY:
         st.warning("Upload PPT/PDF files to enable AI-Powered Management Analysis. Perplexity API key missing.")
 
-# Community Insight Quick Link
+# Quick Link to ValuePickr Forum for ticker
 st.markdown("<div class='section-title'>🔗 ValuePickr Forum Search</div>", unsafe_allow_html=True)
 st.markdown(f"[Open ValuePickr discussions for {ticker_code}](https://forum.valuepickr.com/search?q={ticker_code})")
 
