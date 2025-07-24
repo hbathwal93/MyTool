@@ -1,11 +1,9 @@
-import os
-import io
-import datetime as dt
+import os, io, datetime as dt
 import streamlit as st
 
-# Lazy imports inside functions to speed up startup
-def import_dependencies():
-    global requests, yfinance, pd, BeautifulSoup, PdfReader, Presentation, OpenAI, feedparser, PushshiftAPI
+# Minimal imports up-front: heavy libs loaded inside functions
+def lazy_imports():
+    global requests, yfinance, pd, BeautifulSoup, PdfReader, Presentation, OpenAI, feedparser
     import requests
     import yfinance as yf
     import pandas as pd
@@ -14,90 +12,84 @@ def import_dependencies():
     from pptx import Presentation
     from openai import OpenAI
     import feedparser
-    from psaw import PushshiftAPI
 
-import_dependencies()
+lazy_imports()
 
-# UI Config & Styles
+# --- CONFIG & STYLES
 st.set_page_config(page_title="Smart Equity Dossier", layout="wide")
-ACCENT = "#39ff14"
-BG = "#191c1f"
-CARD = "#2a2d31"
-st.markdown(f"""
+st.markdown("""
 <style>
-body {{background-color:{BG}; color:#e6eefa;}}
-.stApp {{background:{BG};}}
-.section-title {{color:{ACCENT}; font-size:1.25em; margin-top:1rem;}}
-.card {{background:{CARD}; padding:1rem; border-radius:8px;}}
-a {{color:{ACCENT};}}
+body { background-color: #191c1f; color:#e6eefa;}
+.stApp { background:#191c1f; }
+.section-title { color:#39ff14; font-size:1.25em; margin-top:1rem; }
+.card { background:#2a2d31; padding:1rem; border-radius:8px; }
+a { color:#39ff14; }
 </style>
 """, unsafe_allow_html=True)
 
-# Perplexity Client Setup
+# --- API Secret/key
 PPLX_KEY = st.secrets.get("PPLX_API_KEY") or os.getenv("PPLX_API_KEY")
-client = OpenAI(api_key=PPLX_KEY, base_url="https://api.perplexity.ai") if PPLX_KEY else None
+client = None
+if PPLX_KEY:
+    from openai import OpenAI
+    client = OpenAI(api_key=PPLX_KEY, base_url="https://api.perplexity.ai")
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0"
-}
+HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64)"}
 
 def resolve_ticker(ticker):
-    yf_ticker = yf.Ticker(f"{ticker}.NS")
-    info = yf_ticker.info
-    if info.get("regularMarketPrice") is not None:
-        hist = yf_ticker.history(period="5y")
-        return f"{ticker}.NS", info, hist
-    else:
-        yf_ticker = yf.Ticker(f"{ticker}.BO")
-        info = yf_ticker.info
-        if info.get("regularMarketPrice") is not None:
-            hist = yf_ticker.history(period="5y")
-            return f"{ticker}.BO", info, hist
+    import yfinance as yf
+    ticker, _ = ticker.strip().upper(), None
+    for s in [".NS", ".BO"]:
+        tkr = f"{ticker}{s}"
+        info = yf.Ticker(tkr).info
+        if info.get("regularMarketPrice"):
+            hist = yf.Ticker(tkr).history(period="5y")
+            return tkr, info, hist
     return None, None, None
 
 def read_html_table_screener(ticker_code, table_index):
+    import requests
+    from bs4 import BeautifulSoup
+    import pandas as pd
     url = f"https://www.screener.in/company/{ticker_code}/consolidated/"
-    resp = requests.get(url, headers=HEADERS, timeout=15)
-    soup = BeautifulSoup(resp.text, "html.parser")
+    r = requests.get(url, headers=HEADERS, timeout=15)
+    soup = BeautifulSoup(r.text, "html.parser")
     tables = soup.find_all("table", class_="data-table")
     if len(tables) > table_index:
         return pd.read_html(str(tables[table_index]), flavor="html5lib")[0]
     return None
 
 def fetch_rss_items(rss_url, max_items=5):
-    resp = requests.get(rss_url, headers=HEADERS, timeout=10)
-    soup = BeautifulSoup(resp.content, "xml")
+    import requests
+    from bs4 import BeautifulSoup
+    r = requests.get(rss_url, headers=HEADERS, timeout=10)
+    soup = BeautifulSoup(r.content, "xml")
     items = soup.find_all("item")[:max_items]
-    return [{"title": item.title.text, "link": item.link.text, "date": item.pubDate.text[:16]} for item in items]
+    return [{"title": i.title.text, "link": i.link.text, "date": i.pubDate.text[:16]} for i in items]
 
-def get_news_google(ticker, count=5):
-    url = f"https://news.google.com/rss/search?q={ticker}+stock+india"
-    return fetch_rss_items(url, count)
-
-def get_news_et_top(count=5):
-    url = "https://economictimes.indiatimes.com/rssfeedstopstories.cms"
-    return fetch_rss_items(url, count)
-
-def get_news_et_industry(count=5):
-    url = "https://economictimes.indiatimes.com/rss/etindustryrss.cms"
-    return fetch_rss_items(url, count)
-
-def get_news_mint(count=5):
-    url = "https://www.livemint.com/rss/news"
-    return fetch_rss_items(url, count)
+def get_news(feed_func, arg, label):
+    news = feed_func(arg)
+    st.markdown(f"**{label}**")
+    for item in news:
+        st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
 
 def get_management_info(ticker_code):
+    import requests
+    from bs4 import BeautifulSoup
     url = f"https://www.screener.in/company/{ticker_code}/company-information/"
-    resp = requests.get(url, headers=HEADERS)
-    soup = BeautifulSoup(resp.text, "html.parser")
+    r = requests.get(url, headers=HEADERS)
+    soup = BeautifulSoup(r.text, "html.parser")
     names = soup.find_all("td", class_="align-left")
     return [n.text.strip() for n in names][:5] if names else ["No management data found."]
 
 def extract_text_from_file(file_bytes, filename):
-    if filename.lower().endswith(".pdf"):
+    ext = filename.lower()
+    if ext.endswith(".pdf"):
+        from pypdf import PdfReader
         pdf = PdfReader(io.BytesIO(file_bytes))
         return "\n".join(page.extract_text() or "" for page in pdf.pages)
-    elif filename.lower().endswith(".pptx"):
+    elif ext.endswith(".pptx"):
+        from pptx import Presentation
         prs = Presentation(io.BytesIO(file_bytes))
         text_runs = []
         for slide in prs.slides:
@@ -109,142 +101,125 @@ def extract_text_from_file(file_bytes, filename):
 
 def analyze_perplexity_document(text, prompt):
     if client is None:
-        return "🔑 Missing or invalid Perplexity API key."
-    messages = [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": text[:12000]}  # truncate to token limit
-    ]
+        return "🔑 Perplexity Pro API key not set."
     try:
-        response = client.chat.completions.create(model="sonar-pro", messages=messages)
-        return response.choices[0].message.content
+        resp = client.chat.completions.create(
+            model="sonar-pro", 
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": text[:12000]}
+            ]
+        )
+        return resp.choices[0].message.content
     except Exception as e:
         return f"Error during Perplexity API call: {e}"
 
+# --- ValuePickr & Reddit: use only feedparser, skip psaw for reliability
 def fetch_valuepickr_threads(n=15):
-    feed_url = "https://valuepickr4.rssing.com/chan-72344682/latest.php"
+    import feedparser, re
     cutoff = dt.datetime.utcnow() - dt.timedelta(days=90)
-    feed = feedparser.parse(feed_url)
+    feed = feedparser.parse("https://valuepickr4.rssing.com/chan-72344682/latest.php")
     threads = []
     for entry in feed.entries:
-        pub = dt.datetime(*entry.published_parsed[:6])
-        if pub < cutoff:
+        dt_p = dt.datetime(*entry.published_parsed[:6])
+        if dt_p < cutoff:
             continue
-        import re
         m = re.search(r"\[Replies:\s*(\d+)\]", entry.title)
         replies = int(m.group(1)) if m else 0
-        threads.append({"Date": pub, "Replies": replies, "Topic": entry.title.split(" [")[0], "URL": entry.link})
+        threads.append({"Date": dt_p, "Replies": replies, "Topic": entry.title.split(" [")[0], "URL": entry.link})
+    import pandas as pd
     df = pd.DataFrame(threads)
-    df = df.sort_values(["Replies", "Date"], ascending=False)
-    return df.head(n)
+    if df.empty:
+        return df
+    return df.sort_values(["Replies", "Date"], ascending=False).head(n)
 
-def fetch_reddit_threads(subreddits, n=15):
-    api = PushshiftAPI()
-    now = int(dt.datetime.utcnow().timestamp())
-    since = now - 90 * 86400
-    posts = []
-    for sub in subreddits:
-        gen = api.search_submissions(subreddit=sub, after=since, filter=['title', 'num_comments', 'score', 'created_utc', 'full_link'], sort='desc', sort_type='num_comments', limit=n)
-        for post in gen:
-            posts.append({
-                "Date": dt.datetime.utcfromtimestamp(post.created_utc),
-                "Subreddit": sub,
-                "Comments": post.num_comments,
-                "Score": post.score,
-                "Title": post.title,
-                "URL": post.full_link
-            })
-    df = pd.DataFrame(posts)
-    df = df.sort_values(["Comments", "Score"], ascending=False)
-    return df.head(n)
+def fetch_reddit_threads_gnews(ticker, n=15):
+    # work around unreliable Pushshift: get top Reddit posts via Google News RSS search for "reddit"
+    news = fetch_rss_items(f"https://news.google.com/rss/search?q={ticker}+site:reddit.com", n)
+    import pandas as pd
+    return pd.DataFrame([{"Date": i['date'], "Title": i['title'], "URL": i['link']} for i in news])
 
-# Sidebar - Input Section
+# --- Streamlit sidebar/input
 st.sidebar.title("🔍 Search & Upload")
-user_input = st.sidebar.text_input("Enter stock ticker (NSE/BSE code) or company name")
-uploaded_files = st.sidebar.file_uploader("Upload PPT/PDF (Investor Presentations, Calls)", accept_multiple_files=True, type=['pdf', 'pptx'])
+user_input = st.sidebar.text_input("Enter NSE/BSE ticker or company name")
+uploaded_files = st.sidebar.file_uploader("Upload Investor Presentations/PDFs", accept_multiple_files=True, type=['pdf', 'pptx'])
 
 if not user_input:
     st.info("Enter a ticker symbol in the sidebar to begin.")
     st.stop()
 
 ticker_resolved, stock_info, stock_hist = resolve_ticker(user_input.upper())
-if ticker_resolved is None:
-    st.error("Ticker not found on Yahoo Finance. Please check input.")
+if ticker_resolved is None or stock_info is None:
+    st.error("Ticker not found or no current data (Yahoo Finance).")
     st.stop()
 
 ticker_code = ticker_resolved.replace(".NS", "").replace(".BO", "")
 st.markdown(f"<div class='section-title'>💹 {ticker_resolved}</div>", unsafe_allow_html=True)
 
-# Price summary metrics
+# --- Price summary metrics
 c1, c2, c3 = st.columns(3)
 c1.metric("Current Price", f"₹{stock_info.get('regularMarketPrice', 'N/A')}")
 c2.metric("52-Week High", f"₹{stock_info.get('fiftyTwoWeekHigh', 'N/A')}")
 c3.metric("52-Week Low", f"₹{stock_info.get('fiftyTwoWeekLow', 'N/A')}")
-st.line_chart(stock_hist["Close"])
+if not stock_hist.empty:
+    st.line_chart(stock_hist["Close"])
+else:
+    st.info("Pricing data history not available.")
 
-# 1. Sectoral Trends & Triggers
+# --- Sectoral Trends & Triggers
 st.markdown("<div class='section-title'>🌐 Sectoral Trends & Triggers (Last 7 Days)</div>", unsafe_allow_html=True)
 sector = stock_info.get("sector", "")
-sector_news = get_news_google(sector, 7) if sector else []
-for item in sector_news:
-    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
+if sector:
+    get_news(fetch_rss_items, f"https://news.google.com/rss/search?q={sector}+india", "Google News Sector")
+else:
+    st.info("No sector specified for this company.")
 
-# 2. News & Competition
+# --- News & Competition (Google, ET, Mint)
 st.markdown("<div class='section-title'>📰 News & Competition</div>", unsafe_allow_html=True)
-st.markdown("**Google News (Company)**")
-company_news = get_news_google(ticker_code, 5)
-for item in company_news:
-    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
+get_news(fetch_rss_items, f"https://news.google.com/rss/search?q={ticker_code}+stock+india", "Google News (Company)")
+get_news(fetch_rss_items, "https://economictimes.indiatimes.com/rssfeedstopstories.cms", "Economic Times - Top Stories")
+get_news(fetch_rss_items, "https://economictimes.indiatimes.com/rss/etindustryrss.cms", "Economic Times - Industry News")
+get_news(fetch_rss_items, "https://www.livemint.com/rss/news", "Mint - Latest News")
 
-st.markdown("**Economic Times - Top Stories**")
-et_top_news = get_news_et_top(5)
-for item in et_top_news:
-    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
-
-st.markdown("**Economic Times - Industry News**")
-et_ind_news = get_news_et_industry(5)
-for item in et_ind_news:
-    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
-
-st.markdown("**Mint - Latest News**")
-mint_news_list = get_news_mint(5)
-for item in mint_news_list:
-    st.write(f"- [{item['title']}]({item['link']}) — *{item['date']}*")
-
-# 6. Forum Threads (ValuePickr & Reddit)
-st.markdown("<div class='section-title'>💬 Investor Community Threads (Last 90 Days)</div>", unsafe_allow_html=True)
+# --- Community Threads: ValuePickr & Reddit
+st.markdown("<div class='section-title'>💬 Community Threads (Last 90 Days)</div>", unsafe_allow_html=True)
 st.markdown("**ValuePickr Top Discussions**")
 vp_df = fetch_valuepickr_threads()
-st.dataframe(vp_df)
+if not vp_df.empty:
+    st.dataframe(vp_df)
+else:
+    st.info("No ValuePickr forum threads found.")
 
-st.markdown("**Reddit Top Discussions** in r/IndianStockMarket, r/Stocks, r/investingindia")
-reddit_df = fetch_reddit_threads(["IndianStockMarket", "Stocks", "investingindia"])
-st.dataframe(reddit_df)
+st.markdown("**Reddit Top Posts (via Google News search)**")
+reddit_df = fetch_reddit_threads_gnews(ticker_code)
+if not reddit_df.empty:
+    st.dataframe(reddit_df)
+else:
+    st.info("No Reddit posts found.")
 
-# Perplexity AI Management Analysis Section
+# --- AI Management Analysis (Perplexity)
 if uploaded_files and client:
     st.markdown("<div class='section-title'>🤖 AI-Powered Management Analysis</div>", unsafe_allow_html=True)
     for f in uploaded_files:
-        bytes_data = f.read()
-        text_content = extract_text_from_file(bytes_data, f.name)
-        with st.spinner(f"Analyzing {f.name}…"):
-            management_summary = analyze_perplexity_document(
+        file_bytes = f.read()
+        text_content = extract_text_from_file(file_bytes, f.name)
+        with st.spinner(f"Analyzing {f.name} with Perplexity AI…"):
+            mgmt_summary = analyze_perplexity_document(
                 text_content,
-                "You are an equity research analyst. Provide a concise bulleted overview of management commentary focusing on strategic direction, guidance, risks, and governance."
+                "You are an equity research analyst. Provide a concise bulleted summary of management commentary focusing on strategy, guidance, risks, and governance from this company document."
             )
             integrity_matrix = analyze_perplexity_document(
                 text_content,
-                "Assess management integrity by scoring Guidance Accuracy, Delivery vs Promise, Transparency, Governance Flags from 1 to 10 with justification."
+                "Assess management integrity: Score Guidance Accuracy, Delivery vs Promise, Transparency, and Governance Flags from 1 to 10, with evidence from this document."
             )
         st.subheader(f"Document: {f.name}")
-        st.markdown("### Management Summary")
-        st.write(management_summary)
-        st.markdown("### Integrity Matrix")
+        st.markdown("#### Management Summary")
+        st.write(mgmt_summary)
+        st.markdown("#### Integrity Matrix")
         st.write(integrity_matrix)
-else:
-    if not PPLX_KEY:
-        st.warning("Upload PPT/PDF files to enable AI-Powered Management Analysis. Perplexity API key missing.")
+elif not client:
+    st.warning("Add your Perplexity API key in Streamlit secrets for AI sections.")
 
-# Quick Link to ValuePickr Forum for ticker
+# Quick ValuePickr Search Link
 st.markdown("<div class='section-title'>🔗 ValuePickr Forum Search</div>", unsafe_allow_html=True)
 st.markdown(f"[Open ValuePickr discussions for {ticker_code}](https://forum.valuepickr.com/search?q={ticker_code})")
-
