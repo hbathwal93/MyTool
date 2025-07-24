@@ -3,7 +3,6 @@ import os
 from openai import OpenAI
 import pandas as pd
 from datetime import datetime
-import json
 
 # Page configuration
 st.set_page_config(
@@ -31,43 +30,31 @@ st.markdown("""
     margin: 1rem 0;
     border-left: 4px solid #2a5298;
 }
-.metric-card {
-    background: white;
-    padding: 1rem;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    text-align: center;
-}
 .recommendation-buy { background-color: #d4edda; border: 1px solid #c3e6cb; }
 .recommendation-hold { background-color: #fff3cd; border: 1px solid #ffeaa7; }
 .recommendation-sell { background-color: #f8d7da; border: 1px solid #f5c6cb; }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize Perplexity client - OPTIMIZED FOR RENDER.COM
-@st.cache_resource
+# FIXED: Initialize Perplexity client for Render.com
 def init_perplexity_client():
-    # For Render.com, prioritize environment variables over st.secrets
+    """Initialize Perplexity client - Render.com compatible"""
+    # Get API key from environment variable (Render.com method)
     api_key = os.getenv("PPLX_API_KEY")
-    
-    # Only try st.secrets if environment variable is not found
-    if not api_key:
-        try:
-            api_key = st.secrets.get("PPLX_API_KEY")
-        except (FileNotFoundError, AttributeError):
-            # No secrets file found, which is expected on Render.com
-            pass
     
     if api_key:
         return OpenAI(api_key=api_key, base_url="https://api.perplexity.ai")
-    return None
+    else:
+        return None
 
+# Initialize client
 client = init_perplexity_client()
 
 def query_perplexity(prompt, model="sonar-pro"):
     """Query Perplexity API with error handling"""
     if not client:
-        return "⚠️ Perplexity API key not configured. Please add PPLX_API_KEY as environment variable on Render.com."
+        st.error("❌ Perplexity API key not found. Please check your environment variable PPLX_API_KEY on Render.com")
+        return "⚠️ API key not configured"
     
     try:
         response = client.chat.completions.create(
@@ -82,74 +69,6 @@ def query_perplexity(prompt, model="sonar-pro"):
         return response.choices[0].message.content
     except Exception as e:
         return f"Error querying Perplexity: {str(e)}"
-
-# Header
-st.markdown("""
-<div class="main-header">
-    <h1>📊 Professional Investment Research Platform</h1>
-    <p>Comprehensive Stock Analysis Powered by Perplexity AI</p>
-</div>
-""", unsafe_allow_html=True)
-
-# Sidebar for input
-st.sidebar.header("🔍 Stock Analysis")
-ticker_input = st.sidebar.text_input(
-    "Enter Stock Ticker or Company Name:",
-    placeholder="e.g., TCS, RELIANCE, AAPL",
-    help="Enter NSE/BSE ticker for Indian stocks or standard ticker for international stocks"
-)
-
-analysis_date = datetime.now().strftime("%B %d, %Y")
-st.sidebar.info(f"Analysis Date: {analysis_date}")
-
-if st.sidebar.button("🚀 Generate Complete Analysis", type="primary"):
-    if not ticker_input:
-        st.error("Please enter a stock ticker or company name.")
-    elif not client:
-        st.error("Perplexity API key not configured. Please check your environment variables on Render.com.")
-    else:
-        ticker = ticker_input.upper().strip()
-        
-        # Progress tracking
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        # Analysis sections
-        sections = [
-            ("🌐 Sectoral Trends & Triggers", "sectoral_analysis"),
-            ("📰 News & Competition", "news_competition"),
-            ("💰 Financial Analysis - P&L", "financial_pl"),
-            ("🏦 Financial Analysis - Balance Sheet", "financial_bs"),
-            ("💸 Financial Analysis - Cash Flow", "financial_cf"),
-            ("📊 Ratio Analysis", "ratio_analysis"),
-            ("👥 Management Evaluation", "management_eval"),
-            ("📈 Management Guidance & Delivery", "management_guidance"),
-            ("📋 Investor Presentations Analysis", "investor_presentations"),
-            ("🎙️ Conference Calls Analysis", "conference_calls"),
-            ("💬 Community & Forum Analysis", "community_analysis"),
-            ("📑 Annual Report Forensics", "annual_report"),
-            ("🎯 Management Integrity Matrix", "integrity_matrix"),
-            ("🚀 Growth Triggers", "growth_triggers"),
-            ("💎 Valuation Analysis", "valuation_analysis"),
-            ("🎭 Scenario Analysis", "scenario_analysis"),
-            ("⭐ Final Recommendation", "final_recommendation")
-        ]
-        
-        results = {}
-        
-        for i, (title, key) in enumerate(sections):
-            status_text.text(f"Analyzing: {title}")
-            progress_bar.progress((i + 1) / len(sections))
-            
-            # Generate specific prompts for each section
-            prompt = generate_section_prompt(key, ticker, analysis_date)
-            results[key] = query_perplexity(prompt)
-            
-        status_text.text("Analysis Complete!")
-        progress_bar.progress(1.0)
-        
-        # Display results
-        display_analysis_results(ticker, results, analysis_date)
 
 def generate_section_prompt(section_key, ticker, date):
     """Generate specific prompts for each analysis section"""
@@ -430,20 +349,16 @@ def generate_section_prompt(section_key, ticker, date):
 def display_analysis_results(ticker, results, date):
     """Display comprehensive analysis results"""
     
-    # Main title
     st.markdown(f"""
     # 📊 Comprehensive Investment Analysis: {ticker}
     **Analysis Date:** {date}
     **Generated by:** Perplexity AI-Powered Research Platform
-    
     ---
     """)
     
-    # Executive Summary Tab Layout
     tab1, tab2, tab3, tab4 = st.tabs(["📈 Core Analysis", "💼 Management & Governance", "📊 Valuation & Scenarios", "🎯 Final Recommendation"])
     
     with tab1:
-        # Core financial analysis
         col1, col2 = st.columns([1, 1])
         
         with col1:
@@ -479,7 +394,6 @@ def display_analysis_results(ticker, results, date):
             st.markdown('</div>', unsafe_allow_html=True)
     
     with tab2:
-        # Management and governance analysis
         col1, col2 = st.columns([1, 1])
         
         with col1:
@@ -513,15 +427,13 @@ def display_analysis_results(ticker, results, date):
             st.markdown("## 📑 Annual Report Forensics")
             st.markdown(results.get('annual_report', 'Analysis not available'))
             st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Management Integrity Matrix - Full width
+    
         st.markdown('<div class="analysis-section">', unsafe_allow_html=True)
         st.markdown("## 🎯 Management Integrity Matrix")
         st.markdown(results.get('integrity_matrix', 'Analysis not available'))
         st.markdown('</div>', unsafe_allow_html=True)
     
     with tab3:
-        # Valuation and scenario analysis
         col1, col2 = st.columns([1, 1])
         
         with col1:
@@ -536,18 +448,15 @@ def display_analysis_results(ticker, results, date):
             st.markdown(results.get('valuation_analysis', 'Analysis not available'))
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # Scenario Analysis - Full width
         st.markdown('<div class="analysis-section">', unsafe_allow_html=True)
         st.markdown("## 🎭 Scenario Analysis: Bull, Base & Bear Cases")
         st.markdown(results.get('scenario_analysis', 'Analysis not available'))
         st.markdown('</div>', unsafe_allow_html=True)
     
     with tab4:
-        # Final recommendation with highlight
         recommendation_text = results.get('final_recommendation', 'Recommendation not available')
         
-        # Try to extract recommendation type for styling
-        rec_class = "recommendation-hold"  # default
+        rec_class = "recommendation-hold"
         if "buy" in recommendation_text.lower() and "don't buy" not in recommendation_text.lower():
             rec_class = "recommendation-buy"
         elif "sell" in recommendation_text.lower():
@@ -558,7 +467,6 @@ def display_analysis_results(ticker, results, date):
         st.markdown(recommendation_text)
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Download button for full report
         full_report = generate_full_report(ticker, results, date)
         st.download_button(
             label="📄 Download Complete Analysis Report",
@@ -569,99 +477,103 @@ def display_analysis_results(ticker, results, date):
 
 def generate_full_report(ticker, results, date):
     """Generate downloadable markdown report"""
-    report = f"""# Investment Analysis Report: {ticker}
-Generated on: {date}
-Analyst: AI-Powered Research Platform
-
----
-
-## Executive Summary
-{results.get('final_recommendation', 'Not available')}
-
----
-
-## 1. Sectoral Trends & Triggers
-{results.get('sectoral_analysis', 'Not available')}
-
----
-
-## 2. News & Competition Analysis
-{results.get('news_competition', 'Not available')}
-
----
-
-## 3. Financial Analysis
-
-### 3.1 Profit & Loss (5-Year Review)
-{results.get('financial_pl', 'Not available')}
-
-### 3.2 Balance Sheet Analysis (5-Year Review)
-{results.get('financial_bs', 'Not available')}
-
-### 3.3 Cash Flow Statement Analysis (5-Year Review)
-{results.get('financial_cf', 'Not available')}
-
----
-
-## 4. Ratio Analysis
-{results.get('ratio_analysis', 'Not available')}
-
----
-
-## 5. Management Evaluation
-
-### 5.1 Overall Management Assessment
-{results.get('management_eval', 'Not available')}
-
-### 5.2 Management Guidance & Delivery
-{results.get('management_guidance', 'Not available')}
-
-### 5.3 Investor Presentations Analysis
-{results.get('investor_presentations', 'Not available')}
-
-### 5.4 Conference Calls Analysis
-{results.get('conference_calls', 'Not available')}
-
----
-
-## 6. Community & Forum Analysis
-{results.get('community_analysis', 'Not available')}
-
----
-
-## 7. Annual Report Forensics
-{results.get('annual_report', 'Not available')}
-
----
-
-## 8. Management Integrity Matrix
-{results.get('integrity_matrix', 'Not available')}
-
----
-
-## 9. Growth Triggers
-{results.get('growth_triggers', 'Not available')}
-
----
-
-## 10. Valuation Analysis
-{results.get('valuation_analysis', 'Not available')}
-
----
-
-## 11. Scenario Analysis
-{results.get('scenario_analysis', 'Not available')}
-
----
-
-## 12. Final Recommendation
-{results.get('final_recommendation', 'Not available')}
-
----
-
-*This report was generated using AI-powered analysis and should be used in conjunction with additional research and professional advice.*
-"""
+    sections = [
+        ("Executive Summary", results.get('final_recommendation', 'Not available')),
+        ("Sectoral Trends & Triggers", results.get('sectoral_analysis', 'Not available')),
+        ("News & Competition Analysis", results.get('news_competition', 'Not available')),
+        ("P&L Analysis (5-Year)", results.get('financial_pl', 'Not available')),
+        ("Balance Sheet Analysis (5-Year)", results.get('financial_bs', 'Not available')),
+        ("Cash Flow Analysis (5-Year)", results.get('financial_cf', 'Not available')),
+        ("Ratio Analysis", results.get('ratio_analysis', 'Not available')),
+        ("Management Evaluation", results.get('management_eval', 'Not available')),
+        ("Management Guidance & Delivery", results.get('management_guidance', 'Not available')),
+        ("Investor Presentations", results.get('investor_presentations', 'Not available')),
+        ("Conference Calls Analysis", results.get('conference_calls', 'Not available')),
+        ("Community Analysis", results.get('community_analysis', 'Not available')),
+        ("Annual Report Forensics", results.get('annual_report', 'Not available')),
+        ("Management Integrity Matrix", results.get('integrity_matrix', 'Not available')),
+        ("Growth Triggers", results.get('growth_triggers', 'Not available')),
+        ("Valuation Analysis", results.get('valuation_analysis', 'Not available')),
+        ("Scenario Analysis", results.get('scenario_analysis', 'Not available')),
+    ]
+    
+    report = f"# Investment Analysis Report: {ticker}\nGenerated on: {date}\n\n"
+    for title, content in sections:
+        report += f"## {title}\n{content}\n\n---\n\n"
+    
     return report
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📊 Professional Investment Research Platform</h1>
+    <p>Comprehensive Stock Analysis Powered by Perplexity AI</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+st.sidebar.header("🔍 Stock Analysis")
+ticker_input = st.sidebar.text_input(
+    "Enter Stock Ticker or Company Name:",
+    placeholder="e.g., TCS, RELIANCE, AAPL",
+    help="Enter NSE/BSE ticker for Indian stocks or standard ticker for international stocks"
+)
+
+analysis_date = datetime.now().strftime("%B %d, %Y")
+st.sidebar.info(f"Analysis Date: {analysis_date}")
+
+# Check API status
+if st.sidebar.button("🔧 Check API Status"):
+    if client:
+        st.sidebar.success("✅ Perplexity API Connected")
+    else:
+        st.sidebar.error("❌ API Key Missing")
+        st.sidebar.info("Set PPLX_API_KEY in Render environment variables")
+
+if st.sidebar.button("🚀 Generate Complete Analysis", type="primary"):
+    if not ticker_input:
+        st.error("Please enter a stock ticker or company name.")
+    elif not client:
+        st.error("❌ Perplexity API key not configured. Please check your Render.com environment variables.")
+    else:
+        ticker = ticker_input.upper().strip()
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        sections = [
+            ("🌐 Sectoral Trends & Triggers", "sectoral_analysis"),
+            ("📰 News & Competition", "news_competition"),
+            ("💰 Financial Analysis - P&L", "financial_pl"),
+            ("🏦 Financial Analysis - Balance Sheet", "financial_bs"),
+            ("💸 Financial Analysis - Cash Flow", "financial_cf"),
+            ("📊 Ratio Analysis", "ratio_analysis"),
+            ("👥 Management Evaluation", "management_eval"),
+            ("📈 Management Guidance & Delivery", "management_guidance"),
+            ("📋 Investor Presentations Analysis", "investor_presentations"),
+            ("🎙️ Conference Calls Analysis", "conference_calls"),
+            ("💬 Community & Forum Analysis", "community_analysis"),
+            ("📑 Annual Report Forensics", "annual_report"),
+            ("🎯 Management Integrity Matrix", "integrity_matrix"),
+            ("🚀 Growth Triggers", "growth_triggers"),
+            ("💎 Valuation Analysis", "valuation_analysis"),
+            ("🎭 Scenario Analysis", "scenario_analysis"),
+            ("⭐ Final Recommendation", "final_recommendation")
+        ]
+        
+        results = {}
+        
+        for i, (title, key) in enumerate(sections):
+            status_text.text(f"Analyzing: {title}")
+            progress_bar.progress((i + 1) / len(sections))
+            
+            prompt = generate_section_prompt(key, ticker, analysis_date)
+            results[key] = query_perplexity(prompt)
+            
+        status_text.text("Analysis Complete!")
+        progress_bar.progress(1.0)
+        
+        display_analysis_results(ticker, results, analysis_date)
 
 # Sidebar information
 st.sidebar.markdown("---")
@@ -678,14 +590,6 @@ st.sidebar.markdown("""
 ✅ Bull/Bear/Base scenarios  
 ✅ Final investment recommendation  
 """)
-
-st.sidebar.markdown("### ⚙️ Configuration")
-if st.sidebar.button("🔧 Check API Configuration"):
-    if client:
-        st.sidebar.success("✅ Perplexity API Connected")
-    else:
-        st.sidebar.error("❌ Perplexity API Key Missing")
-        st.sidebar.info("Add PPLX_API_KEY as environment variable on Render.com")
 
 # Footer
 st.markdown("---")
